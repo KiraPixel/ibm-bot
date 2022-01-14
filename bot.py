@@ -500,11 +500,7 @@ async def removemoney(ctx, opponent: discord.Member, money: int):
     await moneylog(member, opponent, 'removemoney',money)
 
 
-@slash.slash_command(
-    description = 'Посмотреть профиль', 
-    options = [
-        Option("opponent", description = "пользователь (необязательно)", type=OptionType.USER, required=False)
-    ])    
+@slash.slash_command(description = 'Посмотреть профиль')    
 async def info(ctx):
     member = ctx.author
     if await getclient(member.id) == False:
