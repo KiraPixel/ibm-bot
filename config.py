@@ -1,6 +1,6 @@
 settings = {
-    'guild': 927978558528323676,
-    'token': 'OTI3OTkxMTA0MDQzODk2OTIy.YdSREA.9SQ-XEgtcv7lSGjL3eIm0GcnYiY',
+    'guild': 886679215339085855,
+    'token': 'NzU1Njg4MDMwODg2NTU5ODI2.X2G7Ug.bbGPwbQu_TRLwpqwwiw8fzUiJV8',
     'bot': '',
     'id': '',
     'prefix': '.',
