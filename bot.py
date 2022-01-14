@@ -31,6 +31,13 @@ con = mysql.connector.connect(
 )
 cur = con.cursor()
 
+async def getuserid(discordId):
+    if await getclient(discordId) == False:
+        return(0)
+    cur.execute(f"SELECT id FROM user WHERE discordId = {discordId}")
+    record = cur.fetchall()
+    return(record[0][0])
+
 
 async def defsetmoney(discordId, money):
     cur.execute(f"UPDATE user SET money = {money} WHERE discordId = {discordId}")
@@ -78,12 +85,11 @@ async def createchannel(owner, reaction, category, recipient = 0, money = 0,):
     color = discord.Colour.from_rgb(0, 102, 102)
     embed = discord.Embed(
         title = "Тиккет",
-        description = msg,
+        description = f"{owner.mention} {msg}",
         colour = color
     )
 
     await channel.send(embed=embed)
-
     return(channel)
 
 
@@ -112,6 +118,8 @@ async def getclient(memberId):
     record = cur.fetchall()
     if len(record) == 0:
         return(False)
+    if record[0][0] == 'ban':
+        return(False)
     return(True)
 
 
@@ -119,6 +127,8 @@ async def checkclient(memberId):
     cur.execute(f"SELECT status FROM user WHERE discordId = {memberId}")
     record = cur.fetchall()
     if len(record) == 0:
+        return(False)
+    if record[0][0] == 'ban':
         return(False)
     return(True)  
 
@@ -236,6 +246,14 @@ async def depositdb():
         con.commit()
 
 
+async def getseller(memberId):
+    memberId = await getuserid(memberId)
+    cur.execute(f"SELECT id FROM shops WHERE owner = {memberId}")
+    record = cur.fetchall()
+    if len(record) == 0:
+        return(0)
+    return(record[0][0])
+
 @bot.remove_command('help') #удаляем команду help
 
 
@@ -282,8 +300,7 @@ async def role(ctx, opponent: discord.Member, role: str):
     if len(opRecord) == 0:
         await reply(ctx, False, "Выдача роли", f"{opponent.mention} не является клиентом банка")
         return
-    rolelist = ["admin", "tp", "user"]
-    print(role)
+    rolelist = ["admin", "tp", "user", "ban"]
     if role not in rolelist:
         await reply(ctx, False, "Выдача роли", f"Вы указали неверную роль. Укажите роль из списка: {rolelist}")
         return
@@ -325,6 +342,7 @@ async def givemoney(ctx, opponent: discord.Member, money: int): # Создаём
     if await checkclient(member.id) == False:
         await reply(ctx, False, "Отправить алмазы", "notclient")
         return
+
     cur.execute(f"SELECT money FROM user WHERE discordId = {member.id}")
     record = cur.fetchall()
     if record[0][0] <= money:
@@ -483,11 +501,16 @@ async def removemoney(ctx, opponent: discord.Member, money: int):
 
 
 @slash.slash_command(
-    description = 'Посмотреть свой профиль', 
-    )   
+    description = 'Посмотреть профиль', 
+    options = [
+        Option("opponent", description = "пользователь (необязательно)", type=OptionType.USER, required=False)
+    ])    
 async def info(ctx):
     member = ctx.author
-    cur.execute(f"SELECT id, minecraftNick, money, deposit_Box, deposit_basicMoney, deposit_Money FROM user WHERE discordId = {member.id}")
+    if await getclient(member.id) == False:
+        await reply(ctx, False, "Информация", "notrights")
+        return
+    cur.execute(f"SELECT id, minecraftNick, money, deposit_Box, deposit_basicMoney, deposit_Money, FROM user WHERE discordId = {member.id}")
     record = cur.fetchall()
     memberid = record[0][0]
     minecraftnick = record[0][1]
@@ -606,7 +629,7 @@ async def reg(ctx, opponent: discord.Member, minecraftnick: str, card: discord.R
     name = channelName[0]
     id = channelName[2]
 
-    role = await getrole(member.id, {"admin", "owner"})
+    role = await getrole(member.id, {"tp", "admin", "owner"})
     if role == False:
         await reply(ctx, False, "Регистрация", "notrights")
         return
@@ -692,9 +715,6 @@ async def accept(ctx):
     await deletechannel(ctx.channel, 15, "s")
 
 
-
-
-
 @slash.slash_command(
     description = '[A] отклонить запрос', 
     )   
@@ -751,6 +771,7 @@ async def close(ctx):
     ])   
 async def say(ctx, message):
     member = ctx.author
+    print(type(ctx.author))
     role = await getrole(member.id, {"owner"})
     if role == False:
         await reply(ctx, False, "say", "notrights")
@@ -759,6 +780,58 @@ async def say(ctx, message):
     await ctx.channel.send(message)
 
 
+#shop command
+
+# @slash.slash_command(
+#     description = '[owner] зарегистрировать магазин', 
+#     options = [
+#         Option("opponent", description = "Владелец магазина", type=OptionType.USER, required=True),
+#         Option("shopname", description = "Название магазина", type=OptionType.STRING, required=True)
+#     ])   
+# async def shopreg(ctx, opponent, shopname):
+#     role = await getrole(member.id, {"admin", "owner"})
+#     if role == False:
+#         await reply(ctx, False, "Регистрация магазина", "notrights")
+#         return
+#     print(await getseller(opponent.id))
+#     if await getseller(opponent.id) != 0:
+#         await reply(ctx, False, 'Регистрация магазина', 'EROR')
+#         return
+#     ownerid = await getuserid(opponent.id)
+#     cur.execute(f"INSERT INTO shops(owner, name, dateRegister) VALUES({ownerid}, '{shopname}','{datetime.now().date()}')")
+#     con.commit()
+#     await reply(ctx, True, 'Регистрация магазина', 'successfully')
+
+
+# @slash.slash_command(
+#     description = '[owner] просмотр магазина', 
+#     options = [
+#         Option("shopname", description = "Название магазина", type=OptionType.STRING, required=True)
+#     ])   
+# async def shop(ctx, shopname):
+#     if await getclient(member.id) == False:
+#         await reply(ctx, False, "Просмотр магазина", "notrights")
+#         return
+#     cur.execute(f"SELECT id, owner, dateRegister, rating FROM shops WHERE name = '{shopname}'")
+#     record = cur.fetchall()
+#     if len(record) == 0:
+#         await reply(ctx, False, "Просмотр магазина", "Магазин - не найден")
+#         return
+#     await reply(ctx, True, "Просмотр магазина", f"{record[0][0:]}")
+
+
+# @slash.slash_command(
+#     description = '[seller] добавить товар в магазин', 
+#     options = [
+#         Option("product", description = "Название товара", type=OptionType.STRING, required=True),
+#         Option("price", description = "Цена товара", type=OptionType.INTEGER, required=True),
+#         Option("ammout", description = "Кол-во товара (пример: 12 или 6ст или 1 шалкер)", type=OptionType.STRING, required=True),
+#         Option("discription", description = "Описание товара", type=OptionType.STRING, required=True)
+#     ])   
+# async def addtoshop(ctx, shopname):
+#     return
+
+#events
 @bot.event
 async def on_raw_reaction_add(reaction):
     member = reaction.member
