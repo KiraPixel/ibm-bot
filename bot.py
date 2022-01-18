@@ -219,9 +219,9 @@ async def depositdb():
 
     cardlist = {
         'Обычная': 0, 
-        'Универсальная': 5, 
-        'Золотая': 5, 
-        'Платиновая': 7
+        'Универсальная': 5/4, 
+        'Золотая': 5/4, 
+        'Платиновая': 7/4
         }
 
     for i in record:
@@ -506,7 +506,7 @@ async def info(ctx):
     if await getclient(member.id) == False:
         await reply(ctx, False, "Информация", "notrights")
         return
-    cur.execute(f"SELECT id, minecraftNick, money, deposit_Box, deposit_basicMoney, deposit_Money, FROM user WHERE discordId = {member.id}")
+    cur.execute(f"SELECT id, minecraftNick, money, deposit_Box, deposit_basicMoney, deposit_Money FROM user WHERE discordId = {member.id}")
     record = cur.fetchall()
     memberid = record[0][0]
     minecraftnick = record[0][1]
@@ -572,15 +572,29 @@ async def deposit_buy(ctx):
     if await checkclient(member.id) == False:
         await reply(ctx, False, "Покупка ячейки", "notclient")
         return
-    cur.execute(f"SELECT money, deposit_Box FROM user WHERE discordId = {member.id}")
+    cur.execute(f"SELECT money, deposit_Box, card FROM user WHERE discordId = {member.id}")
     record = cur.fetchall()
     usermoney = record[0][0]
     depositbox = record[0][1]
-    if usermoney < 45:
+    card = record[0][2]
+    cardlist = {
+        'Обычная': 0, 
+        'Универсальная': 5/4, 
+        'Золотая': 5/4, 
+        'Платиновая': 7/4
+        }
+
+    if card = 'Универсальная':
+        price = 45
+    elif card = 'Золотая':
+        price = 90
+    else:
+        price = 288
+    if usermoney < price:
         await reply(ctx, False, "Покупка ячейки", "notmoney")
         return
     cur.execute(f"UPDATE user SET deposit_Box = {depositbox} + 1 WHERE discordId = {member.id}")
-    cur.execute(f"UPDATE user SET money = {usermoney} - 45 WHERE discordId = {member.id}")
+    cur.execute(f"UPDATE user SET money = {usermoney} - {price} WHERE discordId = {member.id}")
     con.commit()
     await reply(ctx, True, "Покупка ячейки", "depositbuy")
 
