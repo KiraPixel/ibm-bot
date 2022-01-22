@@ -3,15 +3,13 @@ from discord.ext import commands
 from discord import Member
 from discord.ext.commands import has_permissions, MissingPermissions
 from discord.utils import get
-from config import settings, cardList
+from dislash import *
+from config import settings, cardList, shop_card_price
 from mysqlconfig import host, user, password, db_name
 from message import messages
-import random
 from asyncio import sleep
-import sqlite3 as sq
 from datetime import timedelta, datetime
 import mysql.connector
-from dislash import InteractionClient, Option, OptionType
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -99,24 +97,49 @@ class IClient:
 
 
 class IShop:
-    def __init__(self, ClientId):
+    def __init__(self, ShopID, owner=-1):
+        if owner != -1:
+            owner = IClient(owner)
+            owner = owner.id
         cur = con.cursor()
-        cur.execute(f"SELECT id, owner, managers, name, dateRegister, rating FROM shops WHERE id = {ClientId}")
+        cur.execute(f"SELECT id, owner, managers, name, dateRegister, rating FROM shops WHERE id = {ShopID} OR owner = {owner}")
         record = cur.fetchone()
+        cur.close()
         if record is None:
             self.check = False
             return
-        cur.execute(f"SELECT minecraftNick FROM user WHERE id = {record[1]}")
-        records = cur.fetchone()
-        cur.close()
         self.check = True
         self.id = record[0]
         self.owner_id = record[1]
-        self.owner_name = records[0]
+        sale_man = IClient(self.owner_id)
+        guild = bot.get_guild(settings['guild'])
+        self.owner_name = sale_man.nick
+        self.owner_discord = guild.get_member(sale_man.discord_id)
         self.managers = record[2]
         self.name = record[3]
         self.dateRegister = record[4]
         self.rating = record[5]
+        cur = con.cursor()
+        cur.execute(f"SELECT id FROM itemstore WHERE shop = {self.id}")
+        items = cur.fetchall()
+        cur.close()
+        self.item = len(items)
+
+    def register(self, name, owner_id):
+        if self.check:
+            return False
+        cur = con.cursor()
+        cur.execute(f"UPDATE user SET salesman = True WHERE id = {owner_id}")
+        cur.execute(f"INSERT INTO shops(owner, name, dateRegister) VALUES({owner_id}, '{name}','{datetime.now().date()}')")
+        con.commit()
+        cur.close()
+
+    def add_item(self, product, price, amount, description):
+        cur = con.cursor()
+        cur.execute(f"INSERT INTO itemstore(shop, name, price, amount, description) VALUES({self.id}, '{product}', {price}, {amount}, '{description}')")
+        con.commit()
+        cur.close()
+        return
 
 
 class IChannel:
@@ -125,12 +148,10 @@ class IChannel:
         cur.execute(
             f"SELECT ticketId, ownerId, type, modClosedId, money, recipient FROM tickets WHERE ticketId = {ticketId}")
         record = cur.fetchone()
-        print(ticketId)
+        cur.close()
         if record is None:
             self.check = False
-            print(1)
             return
-        print(2)
         self.check = True
         self.id = record[0]
         self.ownerId = record[1]
@@ -222,6 +243,32 @@ class IChannel:
         else:
             await channel.delete()
         return True
+
+
+class IItem:
+    def __init__(self, ItemId: int):
+        cur = con.cursor()
+        cur.execute(f"SELECT id, shop, name, description, price, amount FROM itemstore WHERE id = {ItemId}")
+        record = cur.fetchone()
+        cur.close()
+        if record is None:
+            self.check = False
+            return
+        self.check = True
+        self.id = record[0]
+        self.shop = IShop(record[1])
+        self.name = record[2]
+        self.description = record[3]
+        self.price = record[4]
+        self.amount = record[5]
+
+
+async def searh_item(item_name):
+    cur = con.cursor()
+    cur.execute(f"SELECT id, shop, name, description, price, amount FROM itemstore WHERE name LIKE '%{item_name}%'")
+    record = cur.fetchall()
+    cur.close()
+    return record
 
 
 async def reply(ctx, redgreen, head, text):
@@ -550,7 +597,7 @@ async def ainfo(ctx, opponent: discord.Member):
     embed.set_thumbnail(url=opponent.avatar_url)
     embed.add_field(name="Алмазы:", value=f"{client_op.money}")
     embed.add_field(name="Ячейки накопительного счета:", value=f"{client_op.deposit_box}")
-    embed.add_field(name="Деньги на накопительном счету:", value=f"{client_op.money}")
+    embed.add_field(name="Деньги на накопительном счету:", value=f"{client_op.deposit_money}")
     embed.add_field(name="Карта:", value=f"{client_op.card}")
     embed.add_field(name="Роль:", value=f"{client_op.status}")
     embed.add_field(name="Дата регистрации:", value=f"{client_op.register_date}")
@@ -746,53 +793,160 @@ async def say(ctx, message):
 # shop command
 
 # @slash.slash_command(
-#     description = '[owner] зарегистрировать магазин', 
+#     description = 'Купить магазин',
 #     options = [
-#         Option("opponent", description = "Владелец магазина", type=OptionType.USER, required=True),
-#         Option("shopname", description = "Название магазина", type=OptionType.STRING, required=True)
-#     ])   
-# async def shopreg(ctx, opponent, shopname):
-#     role = await getrole(member.id, {"admin", "owner"})
-#     if role == False:
-#         await reply(ctx, False, "Регистрация магазина", "notrights")
+#         Option("shop_name", description = "Название магазина", type=OptionType.STRING, required=True)
+#     ])
+# async def shop_by(ctx, shop_name):
+#     member = ctx.author
+#     client = IClient(member.id)
+#     shop = IShop(-1)
+#
+#     if client.salesman:
+#         await reply(ctx, False,'Покупка лавки', 'shop_there')
 #         return
-#     print(await getseller(opponent.id))
-#     if await getseller(opponent.id) != 0:
-#         await reply(ctx, False, 'Регистрация магазина', 'EROR')
+#
+#     if not client.check:
+#         await reply(ctx, False, 'Покупка лавки', 'notclient')
+#
+#     shop_price = shop_card_price[client.card]
+#     if client.money < shop_price:
+#         await reply(ctx, False, 'Покупка лавки', 'notmoney')
 #         return
-#     ownerid = await getuserid(opponent.id)
-#     cur.execute(f"INSERT INTO shops(owner, name, dateRegister) VALUES({ownerid}, '{shopname}','{datetime.now().date()}')")
-#     con.commit()
-#     await reply(ctx, True, 'Регистрация магазина', 'successfully')
-
-
+#
+#     await moneylog(member,'IBM SALE', 'shop_by', shop_price )
+#     await reply(ctx, True, 'Покупка лавки', 'shop_register')
+#     client.setmoney(client.money - shop_price)
+#     shop.register(shop_name, client.id)
+#
+#
 # @slash.slash_command(
-#     description = '[owner] просмотр магазина', 
+#     description = 'Посмотреть свой или чужой магазин',
 #     options = [
-#         Option("shopname", description = "Название магазина", type=OptionType.STRING, required=True)
-#     ])   
-# async def shop(ctx, shopname):
-#     if await getclient(member.id) == False:
-#         await reply(ctx, False, "Просмотр магазина", "notrights")
-#         return
-#     cur.execute(f"SELECT id, owner, dateRegister, rating FROM shops WHERE name = '{shopname}'")
-#     record = cur.fetchall()
-#     if len(record) == 0:
-#         await reply(ctx, False, "Просмотр магазина", "Магазин - не найден")
-#         return
-#     await reply(ctx, True, "Просмотр магазина", f"{record[0][0:]}")
-
-
+#         Option("shop_id", description = "ID магазина (необязательно)", type=OptionType.STRING, required=False)
+#     ])
+# async def shop(ctx, shop_id=-1):
+#     member = ctx.author
+#     client = IClient(member.id)
+#     if shop_id == -1:
+#         if client.salesman:
+#             shop = IShop(-1, client.id)
+#         else:
+#             await reply(ctx, False, 'Просмотр магазин', 'shop_nothing')
+#             return
+#     else:
+#         shop = IShop(shop_id)
+#         if not shop.check:
+#             await reply(ctx, False, 'Просмотр магазин', 'shop_not')
+#             return
+#
+#     embed = discord.Embed(colour=discord.Colour.from_rgb(204, 255, 0), title=f'Магазин: "{shop.name}"',
+#                           description=f"ID: {shop.id} | Владелец: {shop.owner_discord} / {shop.owner_name}")
+#     embed.set_footer(text=f"{datetime.now()}")
+#     embed.set_thumbnail(url=shop.owner_discord.avatar_url)
+#     embed.add_field(name="Рейтинг:", value=f"{shop.rating}")
+#     embed.add_field(name="Товаров:", value=f"{shop.item}")
+#     embed.add_field(name="Дата регистрации:", value=f"{shop.dateRegister}")
+#     await ctx.reply(embed=embed)
+#
+#
 # @slash.slash_command(
-#     description = '[seller] добавить товар в магазин', 
+#     description = '[seller] добавить товар в магазин',
 #     options = [
 #         Option("product", description = "Название товара", type=OptionType.STRING, required=True),
 #         Option("price", description = "Цена товара", type=OptionType.INTEGER, required=True),
-#         Option("ammout", description = "Кол-во товара (пример: 12 или 6ст или 1 шалкер)", type=OptionType.STRING, required=True),
-#         Option("discription", description = "Описание товара", type=OptionType.STRING, required=True)
-#     ])   
-# async def addtoshop(ctx, shopname):
-#     return
+#         Option("amount", description = "Кол-во товара (штучно)", type=OptionType.INTEGER, required=True),
+#         Option("description", description = "Описание товара", type=OptionType.STRING, required=True)
+#     ])
+# async def shop_add_item(ctx, product, price, amount, description):
+#     member = ctx.author
+#     client = IClient(member.id)
+#
+#     if not client.check:
+#         await reply(ctx, False, 'Покупка лавки', 'notclient')
+#     if price <= 0 or amount <= 0:
+#         await reply(ctx, False, 'Добавить товар в магазин', 'shop_error1')
+#         return
+#     if not client.salesman:
+#         await reply(ctx, False, 'Добавить товар в магазин', 'shop_nothing')
+#         return
+#
+#     shop = IShop(-1, member.id)
+#     shop.add_item(product, price, amount, description)
+#     await reply(ctx, True, 'Добавить товар в магазин', 'item_add')
+#
+#
+# @slash.slash_command(
+#     description = 'Найти товар в IBM SALE',
+#     options = [
+#         Option("product", description = "Название товара", type=OptionType.STRING, required=True),
+#     ])
+# async def search(ctx, product):
+#     items = await searh_item(product) #id, shop, name, description, price, amount
+#     member = ctx.author
+#     client = IClient(member.id)
+#
+#     if not client.check:
+#         await reply(ctx, False, 'Покупка лавки', 'notclient')
+#     if len(items) == 0:
+#         await reply(ctx, False, 'IBM SEARCH', 'items_not_found')
+#         return
+#
+#     embed = discord.Embed(colour=discord.Colour.from_rgb(204, 255, 0), title='IBM SEARCH', description=f"Поиск по предмету: {product}")
+#     embed.set_footer(text=f"Найдено товаров: {len(items)}")
+#     options = []
+#     for i in items:
+#         item_id = i[0]
+#         shop = IShop(i[1])
+#         item_name = i[2]
+#         item_description = i[3]
+#         item_price = i[4]
+#         item_amount = i[5]
+#         embed.add_field(name=f"ID: {item_id} | Название: {item_name}\n{shop.name}", value=f"Цена: {item_price}\nКоличество: {item_amount}\nОписание: {item_description}")
+#         options.append(SelectOption(f"Купить товар с ID {item_id}", f"{item_id}"),)
+#     await ctx.reply(
+#         embed=embed,
+#         components=[
+#             SelectMenu(
+#                 custom_id="test",
+#                 placeholder="Выберите товар",
+#                 options=options
+#             )
+#         ]
+#     )
+#
+#
+# @slash.slash_command(
+#     description = 'Купить товар в IBM SALE',
+#     options = [
+#         Option("product_id", description = "id товара", type=OptionType.INTEGER, required=True),
+#     ])
+# async def buy(ctx, product_id):
+#     member = ctx.author
+#     client = IClient(member.id)
+#
+#     if not client.check:
+#         await reply(ctx, False, 'Покупка лавки', 'notclient')
+#     item = IItem(product_id)
+#     if not item.check:
+#         await reply(ctx, False, 'Покупка товара', 'item_not_found')
+#
+#     row = ActionRow(
+#         Button(
+#             style=ButtonStyle.green,
+#             label="Да",
+#             custom_id="test_button"
+#         ),
+#         Button(
+#             style=ButtonStyle.red,
+#             label="Нет",
+#             custom_id="test_button2"
+#         )
+#     )
+#     embed = discord.Embed(colour=discord.Colour.from_rgb(0, 0, 0), title='IBM SALE', description=f"Товар: {item.name}")
+#     embed.add_field(name=f"ID: {item.id}\nМагазин: {item.shop.name}", value=f"Цена: {item.price}\nКоличество: {item.amount}\nОписание: {item.description}")
+#     await ctx.reply('Вы точно хотите купить этот товар?', embed=embed, components=[row])
+
 
 # events
 @bot.event
